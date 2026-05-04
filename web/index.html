@@ -1,0 +1,467 @@
+﻿<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clean Attention — ANC Real-Time</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',Tahoma,sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}
+    .container{max-width:1000px;margin:0 auto;padding:16px}
+    header{text-align:center;padding:24px 0;background:linear-gradient(135deg,#1a3a5c 0%,#0f2440 100%);border-radius:0 0 16px 16px;margin-bottom:20px;border-bottom:2px solid #2d6a9f}
+    header h1{font-size:2em;color:#4fc3f7}
+    header p{opacity:.8;font-size:.9em;margin-top:6px;color:#90caf9}
+    .badge{display:inline-block;background:#1565c0;color:#90caf9;border-radius:20px;padding:3px 12px;font-size:.75em;margin-top:8px;border:1px solid #2d6a9f}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:18px;margin-bottom:16px}
+    .card h2{color:#4fc3f7;margin-bottom:14px;font-size:1.1em;display:flex;align-items:center;gap:8px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+    .col{display:flex;flex-direction:column;gap:4px}
+    label{font-size:.8em;color:#8b949e}
+    input[type=number],input[type=range]{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 10px;font-size:.9em}
+    input[type=range]{width:120px;accent-color:#4fc3f7;padding:0}
+    .vd{font-weight:bold;color:#4fc3f7;min-width:40px;display:inline-block}
+    button{padding:10px 22px;border:none;border-radius:8px;background:#1565c0;color:white;font-size:.95em;cursor:pointer;transition:.2s}
+    button:hover{background:#1976d2}
+    button:disabled{background:#333;color:#666;cursor:not-allowed}
+    button.secondary{background:#1b2838;border:1px solid #30363d;color:#8b949e}
+    button.secondary:hover{background:#21262d;color:#e6edf3}
+    .drop-zone{border:2px dashed #30363d;border-radius:10px;padding:28px;text-align:center;color:#8b949e;cursor:pointer;transition:.2s;position:relative}
+    .drop-zone:hover,.drop-zone.dragover{border-color:#4fc3f7;color:#4fc3f7;background:#0d1f2d}
+    .drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+    .drop-zone .fname{color:#4fc3f7;font-weight:bold;font-size:.9em;margin-top:6px}
+    .status-bar{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;font-size:.85em;color:#8b949e;margin-bottom:12px;min-height:36px}
+    .status-bar.ok{color:#56d364;border-color:#238636}
+    .status-bar.err{color:#f85149;border-color:#da3633}
+    .status-bar.run{color:#4fc3f7;border-color:#1565c0}
+    .meters{display:flex;gap:12px;flex-wrap:wrap}
+    .meter{flex:1;min-width:140px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px}
+    .meter-label{font-size:.75em;color:#8b949e;margin-bottom:6px}
+    .meter-val{font-size:1.5em;font-weight:bold;color:#4fc3f7}
+    .meter-sub{font-size:.75em;color:#8b949e;margin-top:2px}
+    .vad-pill{display:inline-block;border-radius:20px;padding:2px 10px;font-size:.8em;font-weight:bold;transition:.3s}
+    .vad-voice{background:#1b4332;color:#56d364;border:1px solid #238636}
+    .vad-silent{background:#161b22;color:#8b949e;border:1px solid #30363d}
+    canvas{width:100%;height:80px;display:block;border-radius:6px;background:#0d1117;margin-top:8px}
+    .graph-label{font-size:.75em;color:#8b949e;margin-bottom:2px;margin-top:10px}
+    progress{width:100%;height:8px;border-radius:4px;appearance:none;-webkit-appearance:none;background:#0d1117}
+    progress::-webkit-progress-bar{background:#0d1117;border-radius:4px}
+    progress::-webkit-progress-value{background:#1565c0;border-radius:4px}
+    .stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+    .stat-box{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:10px;text-align:center}
+    .stat-box .sv{font-size:1.4em;font-weight:bold;color:#4fc3f7}
+    .stat-box .sk{font-size:.75em;color:#8b949e;margin-top:2px}
+    .info-box{background:#0d1f2d;border:1px solid #2d6a9f;border-radius:8px;padding:12px;font-size:.82em;color:#90caf9;line-height:1.7}
+    .info-box b{color:#4fc3f7}
+    .step{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:.82em;color:#8b949e}
+    .step .n{background:#1565c0;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.75em;flex-shrink:0}
+    .delay-result{background:#0d2010;border:1px solid #238636;border-radius:8px;padding:10px;font-size:.82em;color:#56d364;margin-top:10px;display:none}
+    a.dl{color:#4fc3f7;text-decoration:none}
+    a.dl:hover{text-decoration:underline}
+    @media(max-width:600px){.stats-grid{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>&#x1F3A7; Clean Attention</h1>
+    <p>ביטול רעשים אקטיבי (ANC) — סימולציה בזמן אמת</p>
+    <span class="badge">NLMS + VAD | Python + C++</span>
+  </header>
+
+  <!-- הסבר מערכת -->
+  <div class="card">
+    <h2>&#x2139;&#xFE0F; איך עובדת המערכת</h2>
+    <div class="info-box">
+      <b>עיקרון ANC:</b> שני ערוצים מדמים שני מיקרופונים באוזנייה:
+      <br><br>
+      <div class="step"><span class="n">1</span><span><b>Primary</b> (מיקרופון פנימי): רעש + דיבור = d[n]</span></div>
+      <div class="step"><span class="n">2</span><span><b>Reference</b> (מיקרופון חיצוני): רעש בלבד + דיליי קטן = x[n]</span></div>
+      <div class="step"><span class="n">3</span><span><b>NLMS</b> לומד: y[n] = w&#x1D40;·x[n] (אמידת רעש)</span></div>
+      <div class="step"><span class="n">4</span><span><b>VAD</b> מזהה דיבור → מקפיא עדכון w כדי לא לבטל דיבור</span></div>
+      <div class="step"><span class="n">5</span><span><b>e[n] = d[n] - y[n]</b> → מתכנס לדיבור בלבד</span></div>
+      <div class="step"><span class="n">6</span><span><b>Anti-Noise = -y[n]</b> → הגל שיושמע מהאוזניות (ביטול פיזי)</span></div>
+    </div>
+  </div>
+
+  <!-- כלי דיליי -->
+  <div class="card">
+    <h2>&#x23F1;&#xFE0F; שלב 1 — יצירת קובץ Reference (דיליי)</h2>
+    <p style="font-size:.82em;color:#8b949e;margin-bottom:14px">
+      העלה את הקובץ המקורי. המערכת תיצור עותק עם דיליי קטן המדמה את הפרש ההגעה בין המיקרופונים (~1.5 ס"מ = 2 דגימות ב-44100Hz).
+    </p>
+    <div class="row">
+      <div class="col">
+        <label>קובץ מקורי (WAV)</label>
+        <div class="drop-zone" id="dzDelay" style="padding:16px">
+          <input type="file" accept=".wav,.WAV" id="delayFile">
+          <span id="delayFileName">גרור קובץ WAV לכאן</span>
+        </div>
+      </div>
+      <div class="col">
+        <label>דיליי (דגימות)</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="delaySlider" min="1" max="20" value="2" oninput="document.getElementById('delayVal').textContent=this.value">
+          <span class="vd" id="delayVal">2</span>
+          <span style="font-size:.75em;color:#8b949e">דגימות</span>
+        </div>
+        <span id="delayCm" style="font-size:.75em;color:#8b949e">≈ 1.56 ס"מ</span>
+      </div>
+      <div class="col">
+        <label>&nbsp;</label>
+        <button id="btnDelay" onclick="createDelay()">&#x25B6; צור קובץ Reference</button>
+      </div>
+    </div>
+    <div class="delay-result" id="delayResult"></div>
+  </div>
+
+  <!-- ANC Stream -->
+  <div class="card">
+    <h2>&#x1F4E1; שלב 2 — הפעלת ANC בזמן אמת</h2>
+
+    <div class="row" style="margin-bottom:14px">
+      <div class="col">
+        <label>ערוץ Primary (מיקרופון פנימי) WAV</label>
+        <div class="drop-zone" id="dzPrimary">
+          <input type="file" accept=".wav,.WAV" id="primaryFile">
+          <div id="primaryFileName">גרור קובץ Primary לכאן</div>
+        </div>
+      </div>
+      <div class="col">
+        <label>ערוץ Reference (מיקרופון חיצוני + דיליי) WAV</label>
+        <div class="drop-zone" id="dzRef">
+          <input type="file" accept=".wav,.WAV" id="refFile">
+          <div id="refFileName">גרור קובץ Reference לכאן</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- פרמטרי NLMS -->
+    <div class="row">
+      <div class="col">
+        <label>אורך מסנן N</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="filterLen" min="64" max="512" step="64" value="256" oninput="document.getElementById('filterLenVal').textContent=this.value">
+          <span class="vd" id="filterLenVal">256</span>
+        </div>
+      </div>
+      <div class="col">
+        <label>קצב למידה μ</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="mu" min="0.001" max="0.1" step="0.001" value="0.01" oninput="document.getElementById('muVal').textContent=parseFloat(this.value).toFixed(3)">
+          <span class="vd" id="muVal">0.010</span>
+        </div>
+      </div>
+      <div class="col">
+        <label>VAD יחס (דיבור/רעש) — הגדל אם קופא יותר מדי</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="vadThresh" min="1.1" max="3.0" step="0.1" value="1.5" oninput="document.getElementById('vadVal').textContent=parseFloat(this.value).toFixed(1)">
+          <span class="vd" id="vadVal">1.5</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="btnStart" onclick="startANC()">&#x25B6; הפעל ANC</button>
+      <button class="secondary" id="btnStop" onclick="stopANC()" disabled>&#x25A0; עצור</button>
+    </div>
+
+    <div class="status-bar" id="statusBar">ממתין להעלאת קבצים...</div>
+    <progress id="progressBar" value="0" max="100" style="margin-bottom:12px"></progress>
+
+    <!-- מדדים בזמן אמת -->
+    <div class="meters">
+      <div class="meter">
+        <div class="meter-label">RMS Primary</div>
+        <div class="meter-val" id="rmsPrimary">—</div>
+        <div class="meter-sub">ערוץ ראשי</div>
+      </div>
+      <div class="meter">
+        <div class="meter-label">RMS Anti-Noise</div>
+        <div class="meter-val" id="rmsAnti">—</div>
+        <div class="meter-sub">גל ביטול</div>
+      </div>
+      <div class="meter">
+        <div class="meter-label">RMS Error e[n]</div>
+        <div class="meter-val" id="rmsError">—</div>
+        <div class="meter-sub">שגיאה = דיבור</div>
+      </div>
+      <div class="meter">
+        <div class="meter-label">VAD</div>
+        <div class="meter-val">
+          <span class="vad-pill vad-silent" id="vadPill">שקט</span>
+        </div>
+        <div class="meter-sub">זיהוי דיבור</div>
+      </div>
+    </div>
+
+    <!-- גרפים -->
+    <div class="graph-label">&#x1F4CA; Primary d[n] — ערוץ ראשי (רעש + דיבור)</div>
+    <canvas id="cOriginal"></canvas>
+
+    <div class="graph-label">&#x1F4CA; Anti-Noise -y[n] — גל הביטול שיושמע מהאוזניות</div>
+    <canvas id="cAnti"></canvas>
+
+    <div class="graph-label">&#x1F4CA; Error e[n] — מה שנשאר = דיבור בלבד (לאחר התכנסות)</div>
+    <canvas id="cError"></canvas>
+
+    <!-- סטטיסטיקות סיום -->
+    <div id="finalStats" style="display:none;margin-top:16px">
+      <div class="card" style="background:#0d2010;border-color:#238636">
+        <h2 style="color:#56d364">&#x2705; עיבוד הושלם</h2>
+        <div class="stats-grid">
+          <div class="stat-box"><div class="sv" id="statChunks">—</div><div class="sk">Chunks</div></div>
+          <div class="stat-box"><div class="sv" id="statDb">—</div><div class="sk">הפחתת רעש (dB)</div></div>
+          <div class="stat-box"><div class="sv" id="statTime">—</div><div class="sk">זמן עיבוד (s)</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// =============================================
+// JavaScript — ממשק ה-ANC
+// =============================================
+
+let evtSource = null;
+let audioCtx = null;
+let nextPlayTime = 0;
+let totalSamples = 0;
+let sampleRate = 44100;
+let processedSamples = 0;
+
+// --- דיליי slider → cm ---
+document.getElementById('delaySlider').addEventListener('input', function() {
+  const d = parseInt(this.value);
+  // מהירות קול 343 מ'/שנ' × דגימות/קצב × 100 ס"מ
+  const cm = (d / 44100 * 343 * 100).toFixed(2);
+  document.getElementById('delayCm').textContent = '≈ ' + cm + ' ס"מ';
+});
+
+// --- drop zones ---
+function setupDrop(dzId, inputId, nameId) {
+  const dz = document.getElementById(dzId);
+  const inp = document.getElementById(inputId);
+  inp.addEventListener('change', () => {
+    if (inp.files[0]) document.getElementById(nameId).textContent = inp.files[0].name;
+  });
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) {
+      // יצירת DataTransfer חדש עם הקובץ
+      const dt = new DataTransfer();
+      dt.items.add(e.dataTransfer.files[0]);
+      inp.files = dt.files;
+      document.getElementById(nameId).textContent = e.dataTransfer.files[0].name;
+    }
+  });
+}
+setupDrop('dzDelay', 'delayFile', 'delayFileName');
+setupDrop('dzPrimary', 'primaryFile', 'primaryFileName');
+setupDrop('dzRef', 'refFile', 'refFileName');
+
+// --- יצירת קובץ reference עם דיליי ---
+async function createDelay() {
+  const f = document.getElementById('delayFile').files[0];
+  if (!f) { alert('אנא בחר קובץ WAV'); return; }
+
+  const delay = document.getElementById('delaySlider').value;
+  document.getElementById('btnDelay').disabled = true;
+  document.getElementById('btnDelay').textContent = 'מעבד...';
+
+  const fd = new FormData();
+  fd.append('audio', f);
+  fd.append('delay_samples', delay);
+
+  try {
+    const resp = await fetch('/delay', { method: 'POST', body: fd });
+    if (!resp.ok) { const j = await resp.json(); throw new Error(j.error); }
+
+    // הורדת הקובץ המדולי
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const cm   = resp.headers.get('X-Delay-CM') || '?';
+
+    const res = document.getElementById('delayResult');
+    res.style.display = 'block';
+    res.innerHTML = `&#x2705; קובץ Reference נוצר! דיליי = ${delay} דגימות ≈ ${cm} ס"מ<br>
+      <a href="${url}" download="reference_delayed.wav" class="dl">&#x2B07;&#xFE0F; הורד reference_delayed.wav</a>
+      <br><small style="color:#8b949e">לאחר ההורדה, העלה את הקובץ כ-Reference בשלב 2</small>`;
+  } catch(e) {
+    alert('שגיאה: ' + e.message);
+  }
+  document.getElementById('btnDelay').disabled = false;
+  document.getElementById('btnDelay').textContent = '▶ צור קובץ Reference';
+}
+
+// --- ציור גרף ---
+function drawGraph(canvasId, data, color) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+  canvas.height = canvas.offsetHeight * window.devicePixelRatio;
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  ctx.clearRect(0, 0, W, H);
+
+  // ציר אפס
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+
+  if (!data || data.length < 2) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const step = Math.max(1, Math.floor(data.length / W));
+  for (let i = 0; i < W; i++) {
+    const idx = Math.floor(i * data.length / W);
+    const y = H/2 - data[idx] * H * 0.45;
+    i === 0 ? ctx.moveTo(i, y) : ctx.lineTo(i, y);
+  }
+  ctx.stroke();
+}
+
+// --- הפעלת ANC ---
+function startANC() {
+  const pFile = document.getElementById('primaryFile').files[0];
+  const rFile = document.getElementById('refFile').files[0];
+  if (!pFile || !rFile) { alert('אנא בחר קבצי Primary ו-Reference'); return; }
+
+  stopANC();
+
+  const fd = new FormData();
+  fd.append('primary',   pFile);
+  fd.append('reference', rFile);
+  fd.append('filter_len', document.getElementById('filterLen').value);
+  fd.append('mu',         document.getElementById('mu').value);
+  fd.append('vad_thresh', document.getElementById('vadThresh').value);
+
+  document.getElementById('btnStart').disabled = true;
+  document.getElementById('btnStop').disabled  = false;
+  document.getElementById('finalStats').style.display = 'none';
+  setStatus('שולח קבצים לשרת...', 'run');
+  document.getElementById('progressBar').value = 0;
+
+  // AudioContext לניגון בזמן אמת
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  nextPlayTime = audioCtx.currentTime + 0.1;
+  processedSamples = 0;
+
+  // POST + SSE — fetch + ReadableStream
+  fetch('/anc-stream', { method: 'POST', body: fd })
+    .then(resp => {
+      if (!resp.ok) return resp.json().then(j => { throw new Error(j.error); });
+      const reader = resp.body.getReader();
+      let buf = '';
+
+      function read() {
+        reader.read().then(({ done, value }) => {
+          if (done) { onDone(); return; }
+          buf += new TextDecoder().decode(value);
+          let idx;
+          // פירוק SSE events (מופרדים בשורה ריקה)
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 2);
+            if (line.startsWith('data: ')) {
+              try { onEvent(JSON.parse(line.slice(6))); } catch(e) {}
+            }
+          }
+          read();
+        }).catch(e => { if (e.name !== 'AbortError') setStatus('שגיאה: ' + e.message, 'err'); });
+      }
+      read();
+    })
+    .catch(e => {
+      setStatus('שגיאה: ' + e.message, 'err');
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+    });
+}
+
+// --- טיפול ב-SSE event ---
+function onEvent(data) {
+  if (data.type === 'meta') {
+    sampleRate = data.sampleRate;
+    totalSamples = data.totalSamples;
+    setStatus(`עיבוד... SR=${sampleRate}Hz | ${(totalSamples/sampleRate).toFixed(1)}s | N=${data.filterLen} μ=${data.mu}`, 'run');
+  }
+  else if (data.type === 'chunk') {
+    processedSamples += data.original.length;
+    const pct = Math.round(processedSamples / totalSamples * 100);
+    document.getElementById('progressBar').value = pct;
+
+    // --- עדכון גרפים ---
+    drawGraph('cOriginal', data.original,  '#4fc3f7');
+    drawGraph('cAnti',     data.antiNoise, '#ef5350');
+    drawGraph('cError',    data.error,     '#66bb6a');
+
+    // --- עדכון מדדים ---
+    document.getElementById('rmsPrimary').textContent = data.rmsPrimary.toFixed(4);
+    document.getElementById('rmsAnti').textContent    = data.rmsAnti.toFixed(4);
+    document.getElementById('rmsError').textContent   = data.rmsError.toFixed(4);
+
+    // VAD pill
+    const pill = document.getElementById('vadPill');
+    if (data.voiceActive) {
+      pill.textContent = '🎙 דיבור';
+      pill.className = 'vad-pill vad-voice';
+    } else {
+      pill.textContent = 'שקט';
+      pill.className = 'vad-pill vad-silent';
+    }
+
+    // --- ניגון Anti-Noise בזמן אמת ---
+    // האות שיושמע = error (מה שנשאר אחרי ביטול הרעש)
+    // בסימולציה, error ≈ דיבור. ב-ANC אמיתי, antiNoise ≈ גל ביטול לאוזניות
+    playChunk(data.errorAudio || data.error, sampleRate);
+  }
+  else if (data.type === 'done') {
+    setStatus(`✅ הושלם! הפחתת רעש: ${data.noiseReductionDb} dB | עיבוד: ${data.processingTimeSec}s`, 'ok');
+    document.getElementById('progressBar').value = 100;
+    document.getElementById('finalStats').style.display = 'block';
+    document.getElementById('statChunks').textContent = data.totalChunks;
+    document.getElementById('statDb').textContent     = data.noiseReductionDb + ' dB';
+    document.getElementById('statTime').textContent   = data.processingTimeSec + 's';
+    document.getElementById('btnStart').disabled = false;
+    document.getElementById('btnStop').disabled  = true;
+  }
+}
+
+// --- ניגון chunk של אודיו ---
+function playChunk(samples, sr) {
+  if (!audioCtx) return;
+  const buf = audioCtx.createBuffer(1, samples.length, sr);
+  const ch  = buf.getChannelData(0);
+  for (let i = 0; i < samples.length; i++) ch[i] = samples[i];
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  if (nextPlayTime < now) nextPlayTime = now + 0.05;
+  src.start(nextPlayTime);
+  nextPlayTime += buf.duration;
+}
+
+function onDone() {
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('btnStop').disabled  = true;
+}
+
+function stopANC() {
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('statusBar');
+  el.textContent = msg;
+  el.className = 'status-bar ' + (cls || '');
+}
+</script>
+</body>
+</html>
