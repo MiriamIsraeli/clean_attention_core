@@ -109,6 +109,61 @@ def read_audio_fileobj(file_obj):
     raise ValueError('פורמט לא נתמך')
 
 
+def open_wav_stream(file_obj):
+    """
+    פותח קובץ WAV כ-stream של float64.
+    מחזיר: (stream, sr, total_samples)
+
+    הקובץ נטען פעם אחת (מגבלת HTTP), אך ה-stream מאפשר
+    קריאה chunk אחר chunk בלבד — בדיוק כמו מיקרופון אמיתי.
+    """
+    buf = io.BytesIO(file_obj.read())
+    buf.seek(0)
+
+    # נסיון עם scipy
+    try:
+        import scipy.io.wavfile as wavfile
+        buf.seek(0)
+        sr, data = wavfile.read(buf)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if data.dtype == np.int16:
+            data = data.astype(np.float64) / 32768.0
+        elif data.dtype == np.int32:
+            data = data.astype(np.float64) / 2147483648.0
+        else:
+            data = data.astype(np.float64)
+        return io.BytesIO(data.tobytes()), sr, len(data)
+    except Exception:
+        pass
+
+    # נסיון עם soundfile
+    try:
+        import soundfile as sf
+        buf.seek(0)
+        data, sr = sf.read(buf, dtype='float64')
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        return io.BytesIO(data.tobytes()), sr, len(data)
+    except Exception:
+        pass
+
+    raise ValueError('פורמט לא נתמך')
+
+
+def read_chunk_from_stream(stream, n_samples):
+    """
+    קורא בדיוק n_samples דגימות (float64) מה-stream.
+    מחזיר מערך numpy, או None אם הגענו לסוף.
+    המידע לא יודע מה נמצא אחרי ה-chunk הנוכחי.
+    """
+    raw = stream.read(n_samples * 8)  # 8 bytes לכל float64
+    if not raw:
+        return None
+    chunk = np.frombuffer(raw, dtype=np.float64)
+    return chunk if len(chunk) > 0 else None
+
+
 @app.route('/')
 def index():
     return send_from_directory(WEB_DIR, 'index.html')
@@ -136,45 +191,52 @@ def anc_stream():
     vad_ratio  = float(request.form.get('vad_thresh', 1.5))
 
     try:
-        sr_p, primary   = read_audio_fileobj(request.files['primary'])
-        sr_r, reference = read_audio_fileobj(request.files['reference'])
+        prim_stream, sr_p, prim_total = open_wav_stream(request.files['primary'])
+        ref_stream,  sr_r, ref_total  = open_wav_stream(request.files['reference'])
     except Exception as ex:
         return jsonify({'error': str(ex)}), 400
 
-    # סנכרון קצבי דגימה
-    if sr_r != sr_p:
-        ratio = sr_p / sr_r
-        new_len = int(len(reference) * ratio)
-        old_idx = np.linspace(0, len(reference) - 1, new_len)
-        reference = np.interp(old_idx, np.arange(len(reference)), reference)
-
     sr = sr_p
-    min_len = min(len(primary), len(reference))
-    primary   = primary[:min_len]
-    reference = reference[:min_len]
+    chunk_samples     = max(2048, int(sr * 0.05) // 256 * 256)
+    # כמה דגימות reference מקבילות ל-chunk_samples של primary (לפי יחס קצב הדגימה)
+    ref_chunk_samples = max(1, int(chunk_samples * sr_r / sr_p))
+    total_samples     = min(prim_total, int(ref_total * sr_p / sr_r))
 
     def generate():
-        total = min_len
-        chunk_samples = max(2048, int(sr * 0.05) // 256 * 256)
-
-        # יצירת מסנן NLMS עם VAD
         nlms = NLMSFilter(N=filter_len, mu=mu, sr=sr, vad_ratio=vad_ratio)
 
-        yield f"data: {json.dumps({'type': 'meta', 'sampleRate': sr, 'totalSamples': total, 'chunkSize': chunk_samples, 'filterLen': filter_len, 'mu': mu, 'vadThresh': vad_ratio})}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'sampleRate': sr, 'totalSamples': total_samples, 'chunkSize': chunk_samples, 'filterLen': filter_len, 'mu': mu, 'vadThresh': vad_ratio})}\n\n"
 
-        idx = 0
         chunk_id = 0
         t_start = time.time()
-        total_noise_power = total_error_power = total_primary_power = 0.0
-        n_chunks = 0
+        processed_samples = 0
         n_noise_chunks = 0
         total_noise_pri_power = 0.0
         total_noise_err_power = 0.0
 
-        while idx < total:
-            end = min(idx + chunk_samples, total)
-            prim_chunk = primary[idx:end]
-            ref_chunk  = reference[idx:end]
+        while True:
+            # === קריאת chunk — המידע לא יודע מה נמצא אחריו ===
+            # בדיוק כמו מיקרופון אמיתי שמספק רק את הרגע הנוכחי
+            prim_chunk = read_chunk_from_stream(prim_stream, chunk_samples)
+            ref_raw    = read_chunk_from_stream(ref_stream,  ref_chunk_samples)
+
+            if prim_chunk is None or ref_raw is None:
+                break
+
+            # סנכרון קצבי דגימה — resample רק את ה-chunk הנוכחי
+            if sr_r != sr_p:
+                ref_chunk = np.interp(
+                    np.linspace(0, len(ref_raw) - 1, len(prim_chunk)),
+                    np.arange(len(ref_raw)),
+                    ref_raw
+                )
+            else:
+                ref_chunk = ref_raw
+
+            # וודא אורכים שווים (chunk אחרון עשוי להיות קצר יותר)
+            min_len    = min(len(prim_chunk), len(ref_chunk))
+            prim_chunk = prim_chunk[:min_len]
+            ref_chunk  = ref_chunk[:min_len]
 
             # === ליבת ה-ANC: NLMS + VAD ===
             # ref_chunk  = x[n] — reference (מיקרופון חיצוני)
@@ -189,10 +251,8 @@ def anc_stream():
             rms_a = float(np.sqrt(np.mean(anti_noise  ** 2) + 1e-12))
             rms_e = float(np.sqrt(np.mean(error       ** 2) + 1e-12))
 
-            total_noise_power   += float(np.mean(noise_est  ** 2))
-            total_error_power   += float(np.mean(error      ** 2))
-            total_primary_power += float(np.mean(prim_chunk ** 2))
-            n_chunks += 1
+            processed_samples += len(prim_chunk)
+
             # צובר רק chunks של רעש טהור (ללא דיבור) למדד dB
             if not nlms.voice_active:
                 total_noise_pri_power += float(np.mean(prim_chunk ** 2))
@@ -214,11 +274,10 @@ def anc_stream():
             })
             yield f"data: {payload}\n\n"
 
-            idx = end
             chunk_id += 1
 
             if chunk_id > 5:
-                target = t_start + (idx / sr) * 0.45
+                target = t_start + (processed_samples / sr) * 0.45
                 wait = target - time.time()
                 if wait > 0:
                     time.sleep(wait)
@@ -237,22 +296,29 @@ def anc_stream():
 @app.route('/delay', methods=['POST'])
 def apply_delay_endpoint():
     """
-    מקבל קובץ WAV ומחזיר אותו עם דיליי.
+    מקבל קובץ WAV ומחזיר primary_delayed.wav:
+      - דיליי קטן (מדמה הגעת הצליל מאוחר יותר למיקרופון הפנימי)
+      - הנחתה של 15% (מדמה בליעת הצליל על ידי כוס האוזנייה)
     קלט: audio (WAV), delay_samples (int, ברירת מחדל 2)
-    פלט: WAV מדולי
+    פלט: WAV מדולי + מוחלש = primary_delayed.wav
     """
     if 'audio' not in request.files:
         return jsonify({'error': 'חסר קובץ audio'}), 400
 
     delay_samples = int(request.form.get('delay_samples', 2))
+    attenuation   = float(request.form.get('attenuation', 0.85))  # 85% = הנחתה של 15%
 
     try:
         sr, audio = read_audio_fileobj(request.files['audio'])
     except Exception as ex:
         return jsonify({'error': str(ex)}), 400
 
-    silence = np.zeros(delay_samples, dtype=audio.dtype)
+    # דיליי: הקובץ הפנימי מגיע מאוחר יותר (אחרי שעבר דרך כוס האוזנייה)
+    silence = np.zeros(delay_samples, dtype=np.float64)
     delayed = np.concatenate([silence, audio])[:len(audio)]
+
+    # הנחתה: כוס האוזנייה מחלישה את הצליל החודר פנימה
+    delayed = delayed * attenuation
 
     import wave
     buf = io.BytesIO()
@@ -266,7 +332,7 @@ def apply_delay_endpoint():
 
     delay_cm = delay_samples / sr * 343.0 * 100
     resp = Response(buf.read(), mimetype='audio/wav')
-    resp.headers['Content-Disposition'] = 'attachment; filename=reference_delayed.wav'
+    resp.headers['Content-Disposition'] = 'attachment; filename=primary_delayed.wav'
     resp.headers['X-Delay-Samples'] = str(delay_samples)
     resp.headers['X-Delay-CM'] = f'{delay_cm:.2f}'
     return resp

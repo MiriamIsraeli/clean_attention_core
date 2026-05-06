@@ -117,7 +117,7 @@ class VAD:
 
 
 # =============================================================
-# NLMSFilter — Normalized LMS עם קפיאת VAD
+# NLMSFilter — Normalized LMS עם קפיאה לפי יציבות תדרית
 # =============================================================
 # עקרון הפעולה:
 #   כל דגימה:
@@ -125,12 +125,13 @@ class VAD:
 #     e[n] = d[n] - y[n]              (שגיאה = primary - אמידה)
 #     w[n+1] = w[n] + μ·e[n]·x[n] / (||x[n]||² + ε)  (NLMS update)
 #
-#   כאשר VAD מזהה דיבור: דילוג על עדכון המשקולות.
-#   כך e[n] = d[n] - y[n] ≈ דיבור + שאריות (לא מנסים לבטל דיבור).
+#   קפיאה לפי יציבות — לא לפי עוצמה:
+#     reference יציב  (שונות נמוכה)  = רעש סטציונרי → NLMS לומד
+#     reference משתנה (שונות גבוהה)  = דיבור/רעש משתנה → NLMS קפוא
+#
+#   יתרון: עובד גם כשהדיבור חלש מהרעש — כי ההבדל הוא ביציבות, לא בעוצמה.
 #
 #   גל הביטול: anti[n] = -y[n]
-#   אות יוצא לאוזניות (חלק של ה"אוויר"): e[n] + anti[n] = e[n] - y[n]... 
-#   אך בסימולציה: output = e[n] = primary - y[n]
 class NLMSFilter:
     def __init__(self,
                  N: int = 256,
@@ -145,7 +146,7 @@ class NLMSFilter:
         eps           : הגנה מחלוקה באפס — ברירת מחדל 1e-6
         weight_limit  : הגבלת נורמה של וקטור המשקולות (יציבות)
         sr            : קצב דגימה
-        vad_ratio     : יחס דיבור/רעש לזיהוי VAD — ברירת מחדל 1.5
+        vad_ratio     : סף יציבות — ערך גבוה = רגיש פחות לשינויים
         """
         self.N = N
         self.mu = mu
@@ -158,8 +159,18 @@ class NLMSFilter:
         # באפר קלט circular — שומר N דגימות אחורה של reference
         self.x_buf = np.zeros(N, dtype=np.float64)
 
-        # VAD — שומר על דיבור
-        self.vad = VAD(sr=sr, vad_ratio=vad_ratio)
+        # סף יציבות — מתעדכן אדפטיבית לפי השונות הממוצעת של reference
+        self._var_floor = None
+        self._var_ema   = 0.0
+        self._var_alpha = 0.05   # EMA איטי — מאפשר התאמה לסביבה
+        self.vad_ratio  = vad_ratio  # כמה פעמים מעל הרצפה = לא סטציונרי
+
+        # גודל חלון sub-chunk לבדיקת יציבות מדויקת יותר
+        self._sub_size  = 128  # דגימות — ~3ms ב-44100Hz
+
+        # Warmup — chunks ראשונים תמיד לומדים (לפני שה-VAD מתחיל לפעול)
+        self._warmup_chunks     = 15   # ~15 × 46ms = ~700ms של למידה ראשונית
+        self._chunk_count       = 0    # מונה chunks מאז תחילת העיבוד
 
         # סטטיסטיקות לממשק
         self.last_error = 0.0
@@ -187,35 +198,60 @@ class NLMSFilter:
         noise_estimate = np.zeros(n, dtype=np.float64)
         error = np.zeros(n, dtype=np.float64)
 
-        # בדיקת VAD לכל ה-chunk פעם אחת (יעיל יותר מבדיקה לכל דגימה)
-        self.voice_active = self.vad.process(primary)
+        self._chunk_count += 1
+        in_warmup = self._chunk_count <= self._warmup_chunks
 
-        for i in range(n):
-            # --- שלב 1: הזזת באפר + הכנסת דגימה חדשה ---
-            # מחלקת x_buf כ-FIFO: x_buf[0] = החדש, x_buf[N-1] = הישן ביותר
-            self.x_buf[1:] = self.x_buf[:-1]   # הזזה ימינה
-            self.x_buf[0] = reference[i]         # הכנסת הדגימה החדשה
+        # --- עיבוד דגימה-דגימה עם VAD ברמת sub-chunk ---
+        # בכל sub_size דגימות: מחשב שונות ומחליט אם ללמוד
+        # כך chunk שמכיל רעש בהתחלה ודיבור בסוף — מתעדכן רק בחלק הרלוונטי
+        i = 0
+        while i < n:
+            sub_end = min(i + self._sub_size, n)
+            ref_sub = reference[i:sub_end]
 
-            # --- שלב 2: אמידת הרעש y[n] = w^T · x ---
-            y = float(np.dot(self.w, self.x_buf))
+            # --- בדיקת יציבות לפי שונות ה-sub-chunk ---
+            ref_var = float(np.var(ref_sub))
+            if self._var_floor is None:
+                self._var_floor = ref_var + self.eps
+            if ref_var < self._var_floor:
+                self._var_floor = 0.95 * self._var_floor + 0.05 * ref_var
+            else:
+                self._var_floor = 0.999 * self._var_floor + 0.001 * ref_var
 
-            # --- שלב 3: חישוב שגיאה e[n] = d[n] - y[n] ---
-            e = float(primary[i]) - y
+            # בזמן warmup — תמיד לומדים ללא קשר ליציבות
+            if in_warmup:
+                sub_frozen = False
+            else:
+                sub_frozen = ref_var > self._var_floor * self.vad_ratio
 
-            # --- שלב 4: עדכון משקולות (NLMS) — רק אם אין דיבור ---
-            # NLMS: μ מחולק ב-||x||² + ε לנרמול לפי עוצמת הקלט
-            # בזמן דיבור: משקולות קפואות — לא לומדים לבטל דיבור!
-            if not self.voice_active:
-                power = float(np.dot(self.x_buf, self.x_buf)) + self.eps
-                self.w += (self.mu / power) * e * self.x_buf
+            for j in range(i, sub_end):
+                # --- שלב 1: הזזת באפר + הכנסת דגימה חדשה ---
+                self.x_buf[1:] = self.x_buf[:-1]
+                self.x_buf[0]  = reference[j]
 
-                # הגבלת נורמה למניעת אי-יציבות
-                norm = float(np.linalg.norm(self.w))
-                if norm > self.weight_limit:
-                    self.w *= self.weight_limit / norm
+                # --- שלב 2: אמידת הרעש y[n] = w^T · x ---
+                y = float(np.dot(self.w, self.x_buf))
 
-            noise_estimate[i] = y
-            error[i] = e
+                # --- שלב 3: חישוב שגיאה e[n] = d[n] - y[n] ---
+                e = float(primary[j]) - y
+
+                # --- שלב 4: עדכון משקולות — רק אם יציב (או warmup) ---
+                if not sub_frozen:
+                    power = float(np.dot(self.x_buf, self.x_buf)) + self.eps
+                    self.w += (self.mu / power) * e * self.x_buf
+                    norm = float(np.linalg.norm(self.w))
+                    if norm > self.weight_limit:
+                        self.w *= self.weight_limit / norm
+
+                noise_estimate[j] = y
+                error[j]          = e
+
+            i = sub_end
+
+        # voice_active לסטטיסטיקות — לפי ה-sub-chunk האחרון
+        self.voice_active = (not in_warmup) and (
+            float(np.var(reference[-self._sub_size:])) > self._var_floor * self.vad_ratio
+        )
 
         # שמירת ערכים אחרונים לסטטיסטיקות
         self.last_noise_estimate = float(np.sqrt(np.mean(noise_estimate ** 2)))

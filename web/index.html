@@ -75,8 +75,8 @@
     <div class="info-box">
       <b>עיקרון ANC:</b> שני ערוצים מדמים שני מיקרופונים באוזנייה:
       <br><br>
-      <div class="step"><span class="n">1</span><span><b>Primary</b> (מיקרופון פנימי): רעש + דיבור = d[n]</span></div>
-      <div class="step"><span class="n">2</span><span><b>Reference</b> (מיקרופון חיצוני): רעש בלבד + דיליי קטן = x[n]</span></div>
+      <div class="step"><span class="n">1</span><span><b>Reference</b> (מיקרופון חיצוני): שומע את הסביבה ראשון = x[n]</span></div>
+      <div class="step"><span class="n">2</span><span><b>Primary</b> (מיקרופון פנימי): אותו אות + דיליי + הנחתה = d[n]</span></div>
       <div class="step"><span class="n">3</span><span><b>NLMS</b> לומד: y[n] = w&#x1D40;·x[n] (אמידת רעש)</span></div>
       <div class="step"><span class="n">4</span><span><b>VAD</b> מזהה דיבור → מקפיא עדכון w כדי לא לבטל דיבור</span></div>
       <div class="step"><span class="n">5</span><span><b>e[n] = d[n] - y[n]</b> → מתכנס לדיבור בלבד</span></div>
@@ -86,9 +86,11 @@
 
   <!-- כלי דיליי -->
   <div class="card">
-    <h2>&#x23F1;&#xFE0F; שלב 1 — יצירת קובץ Reference (דיליי)</h2>
+    <h2>&#x23F1;&#xFE0F; שלב 1 — יצירת קובץ Primary (דיליי + הנחתה)</h2>
     <p style="font-size:.82em;color:#8b949e;margin-bottom:14px">
-      העלה את הקובץ המקורי. המערכת תיצור עותק עם דיליי קטן המדמה את הפרש ההגעה בין המיקרופונים (~1.5 ס"מ = 2 דגימות ב-44100Hz).
+      העלה את הקובץ המקורי — הוא ישמש כ-<b>Reference</b> (מיקרופון חיצוני).<br>
+      המערכת תיצור ממנו <b>primary_delayed.wav</b> עם דיליי קטן + הנחתה של 15%,
+      המדמה את מה שהמיקרופון הפנימי שומע לאחר שהצליל עבר דרך כוס האוזנייה.
     </p>
     <div class="row">
       <div class="col">
@@ -109,7 +111,7 @@
       </div>
       <div class="col">
         <label>&nbsp;</label>
-        <button id="btnDelay" onclick="createDelay()">&#x25B6; צור קובץ Reference</button>
+        <button id="btnDelay" onclick="createDelay()">&#x25B6; צור קובץ Primary</button>
       </div>
     </div>
     <div class="delay-result" id="delayResult"></div>
@@ -121,17 +123,17 @@
 
     <div class="row" style="margin-bottom:14px">
       <div class="col">
-        <label>ערוץ Primary (מיקרופון פנימי) WAV</label>
-        <div class="drop-zone" id="dzPrimary">
-          <input type="file" accept=".wav,.WAV" id="primaryFile">
-          <div id="primaryFileName">גרור קובץ Primary לכאן</div>
+        <label>ערוץ Reference — מיקרופון חיצוני (הקובץ המקורי)</label>
+        <div class="drop-zone" id="dzRef">
+          <input type="file" accept=".wav,.WAV" id="refFile">
+          <div id="refFileName">גרור את הקובץ המקורי לכאן</div>
         </div>
       </div>
       <div class="col">
-        <label>ערוץ Reference (מיקרופון חיצוני + דיליי) WAV</label>
-        <div class="drop-zone" id="dzRef">
-          <input type="file" accept=".wav,.WAV" id="refFile">
-          <div id="refFileName">גרור קובץ Reference לכאן</div>
+        <label>ערוץ Primary — מיקרופון פנימי (primary_delayed.wav מושלב 1)</label>
+        <div class="drop-zone" id="dzPrimary">
+          <input type="file" accept=".wav,.WAV" id="primaryFile">
+          <div id="primaryFileName">גרור את primary_delayed.wav לכאן</div>
         </div>
       </div>
     </div>
@@ -288,9 +290,9 @@ async function createDelay() {
 
     const res = document.getElementById('delayResult');
     res.style.display = 'block';
-    res.innerHTML = `&#x2705; קובץ Reference נוצר! דיליי = ${delay} דגימות ≈ ${cm} ס"מ<br>
-      <a href="${url}" download="reference_delayed.wav" class="dl">&#x2B07;&#xFE0F; הורד reference_delayed.wav</a>
-      <br><small style="color:#8b949e">לאחר ההורדה, העלה את הקובץ כ-Reference בשלב 2</small>`;
+    res.innerHTML = `&#x2705; קובץ Primary נוצר! דיליי = ${delay} דגימות ≈ ${cm} ס"מ | הנחתה 15%<br>
+      <a href="${url}" download="primary_delayed.wav" class="dl">&#x2B07;&#xFE0F; הורד primary_delayed.wav</a>
+      <br><small style="color:#8b949e">בשלב 2: העלה את <b>הקובץ המקורי</b> כ-Reference, ואת <b>primary_delayed.wav</b> כ-Primary</small>`;
   } catch(e) {
     alert('שגיאה: ' + e.message);
   }
