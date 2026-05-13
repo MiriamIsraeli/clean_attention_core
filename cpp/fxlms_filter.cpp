@@ -1,10 +1,10 @@
-#include "fxlms_filter.h"
+-#include "fxlms_filter.h"
 #include <algorithm>
 #include <numeric>
 
 // --- אתחול FxLMS עם נתיב משני ---
 FxLMSFilter::FxLMSFilter(int filterLength, double stepSize,
-                          const std::vector<double>& secondaryPath)
+                          const std=::vector<double>& secondaryPath)
     : N_(filterLength), mu_(stepSize), w_(filterLength, 0.0),
       xBuf_(filterLength, 0.0), xfBuf_(filterLength, 0.0),
       secPath_(secondaryPath) {}
